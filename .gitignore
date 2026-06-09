@@ -1,1 +1,7 @@
 C:\Development_Files\RandoMTest\source\Ground0\cloud_stack_project\cloud_stack_server\src\main\resources\application-local.properties
+
+infra/terraform.tfvars
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/*.tfplan
