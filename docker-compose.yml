@@ -1,0 +1,52 @@
+# docker-compose.yml  (lives at your monorepo root)
+
+services:
+
+  # ─── FRONTEND ───────────────────────────────────────────
+  frontend:
+    build:
+      context: ./cloud_stack_ui      # where to find the Dockerfile
+      dockerfile: Dockerfile         # (this is the default, explicit is clearer)
+    ports:
+      - "3000:80"                      # host:container — only this gets exposed
+    depends_on:
+      - backend                      # don't start until backend is up
+    networks:
+      - app-network
+
+  # ─── BACKEND ────────────────────────────────────────────
+  backend:
+    build:
+      context: ./cloud_stack_server
+      dockerfile: Dockerfile
+    # NO ports: block here intentionally
+    # backend is only reachable by other containers on app-network
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/test_zero
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=yourpassword
+    depends_on:
+      - db
+    networks:
+      - app-network
+
+  # ─── DATABASE ───────────────────────────────────────────
+  db:
+    image: postgres:16-alpine        # no Dockerfile needed — use official image
+    environment:
+      - POSTGRES_DB=test_zero
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=yourpassword
+    volumes:
+      - postgres_data:/var/lib/postgresql/data   # persist data across restarts
+    networks:
+      - app-network
+
+# ─── SHARED NETWORK ─────────────────────────────────────
+networks:
+  app-network:
+    driver: bridge
+
+# ─── NAMED VOLUMES ──────────────────────────────────────
+volumes:
+  postgres_data:
