@@ -10,124 +10,55 @@ echo "=== Updating system packages ==="
 apt-get update -y
 apt-get upgrade -y
 
-# ─── 2. Install Java 21 ─────────────────────────────────────────
-echo "=== Installing Java 21 ==="
-apt-get install -y openjdk-21-jdk
-java -version
+# ─── 2. Install Docker ──────────────────────────────────────────
+echo "=== Installing Docker ==="
+apt-get install -y ca-certificates curl gnupg
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
 
-# ─── 3. Install Maven ───────────────────────────────────────────
-echo "=== Installing Maven ==="
-apt-get install -y maven
-mvn -version
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+  https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+  tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-# ─── 4. Install Node.js 20 ──────────────────────────────────────
-echo "=== Installing Node.js ==="
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt-get install -y nodejs
-node -v && npm -v
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
-# ─── 5. Install Nginx ───────────────────────────────────────────
-echo "=== Installing Nginx ==="
-apt-get install -y nginx
-systemctl enable nginx
-systemctl start nginx
+systemctl enable docker
+systemctl start docker
+docker --version
+echo "=== Docker installed ==="
 
-# ─── 6. Install PostgreSQL ──────────────────────────────────────
-echo "=== Installing PostgreSQL ==="
-apt-get install -y postgresql postgresql-contrib
-systemctl enable postgresql
-systemctl start postgresql
+# ─── 3. Add ubuntu user to docker group ─────────────────────────
+echo "=== Configuring docker permissions ==="
+usermod -aG docker ubuntu
 
-# ─── 7. Set up database ─────────────────────────────────────────
-echo "=== Setting up database ==="
-sudo -u postgres psql <<EOF
-ALTER USER ${db_user} WITH PASSWORD '${db_password}';
-CREATE DATABASE ${db_name};
-GRANT ALL PRIVILEGES ON DATABASE ${db_name} TO ${db_user};
-\c ${db_name}
-GRANT ALL ON SCHEMA public TO ${db_user};
-EOF
-
-# ─── 8. Fix home directory permissions for Nginx ────────────────
-echo "=== Fixing permissions ==="
-chmod o+x /home/ubuntu
-
-# ─── 9. Clone the repo ──────────────────────────────────────────
+# ─── 4. Clone repo (we only need docker-compose.yml) ────────────
 echo "=== Cloning repository ==="
 cd /home/ubuntu
 git clone ${github_repo} cloud_stack
 chown -R ubuntu:ubuntu cloud_stack
 
-# ─── 10. Build the backend ──────────────────────────────────────
-echo "=== Building Spring Boot backend ==="
-cd /home/ubuntu/cloud_stack/cloud_stack_server
-mvn clean package -DskipTests
-echo "=== Backend build complete ==="
-
-# ─── 11. Build the frontend ─────────────────────────────────────
-echo "=== Building React frontend ==="
-cd /home/ubuntu/cloud_stack/cloud_stack_ui
-npm install
-npm run build
-echo "=== Frontend build complete ==="
-
-# ─── 12. Configure Nginx ────────────────────────────────────────
-echo "=== Configuring Nginx ==="
-cat > /etc/nginx/sites-available/cloud_stack <<'NGINX'
-server {
-    listen 80;
-    server_name _;
-
-    root /home/ubuntu/cloud_stack/cloud_stack_ui/dist;
-    index index.html;
-
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    location /api/ {
-        proxy_pass http://localhost:8080/api/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-NGINX
-
-ln -sf /etc/nginx/sites-available/cloud_stack /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default
-nginx -t
-systemctl reload nginx
-
-# ─── 13. Create environment file for Spring Boot ────────────────
-echo "=== Creating environment file ==="
-cat > /etc/cloud_stack.env <<EOF
-DB_NAME=${db_name}
-DB_USER=${db_user}
-DB_PASSWORD=${db_password}
+# ─── 5. Create .env file for docker-compose ─────────────────────
+echo "=== Writing environment variables ==="
+cat > /home/ubuntu/cloud_stack/.env <<EOF
+POSTGRES_DB=${db_name}
+POSTGRES_USER=${db_user}
+POSTGRES_PASSWORD=${db_password}
+SPRING_DATASOURCE_URL=jdbc:postgresql://db:5432/${db_name}
+SPRING_DATASOURCE_USERNAME=${db_user}
+SPRING_DATASOURCE_PASSWORD=${db_password}
 EOF
-chmod 600 /etc/cloud_stack.env
+chmod 600 /home/ubuntu/cloud_stack/.env
+chown ubuntu:ubuntu /home/ubuntu/cloud_stack/.env
 
-# ─── 14. Create systemd service ─────────────────────────────────
-echo "=== Creating systemd service ==="
-cat > /etc/systemd/system/cloud_stack.service <<'SERVICE'
-[Unit]
-Description=Cloud Stack Spring Boot App
-After=network.target postgresql.service
-
-[Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/cloud_stack/cloud_stack_server
-ExecStart=java -jar target/test0-0.0.1-SNAPSHOT.jar
-EnvironmentFile=/etc/cloud_stack.env
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-systemctl daemon-reload
-systemctl enable cloud_stack
-systemctl start cloud_stack
+# ─── 6. Pull images and start stack ─────────────────────────────
+echo "=== Starting application stack ==="
+cd /home/ubuntu/cloud_stack
+docker compose pull          # pulls latest images from Docker Hub
+docker compose up -d         # starts all 3 containers detached
 
 echo "=== Userdata script complete ==="
+echo "=== App should be live on port 80 ==="
